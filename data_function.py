@@ -33,15 +33,19 @@ class MaskDataLoader:
         # image = image.reshape((image.shape[2], image.shape[0], image.shape[1])) #(channel, height, width)
         return image
 
+    @staticmethod
+    def extract_coord_label(data):
+        return np.array([data['x'], data['y'], data['w'], data['h'], data['mask']]).astype('float32')
+
     def convert_coord(x, y, w, h, width=None, height=None):
         pass
 
     def get_data(self, data_file):
-        label = self.data[data_file]
+        label = self.extract_coord_label(self.data[data_file])
         image = self.read_image(data_file)
         image, label = resize_img_bbox_letterbox(image, label, self.resize)
         image = image_pytorch_format(image)
-        return image, np.array([label['x'], label['y'], label['w'], label['h'], label['mask']]).astype('float32')
+        return image, label
 
     def __getitem__(self, index):
         return self.get_data(self.image_file[index])
@@ -94,7 +98,6 @@ def resize_img_bbox_letterbox(img, bbox, size):
     canvas[(size-new_h)//2:(size-new_h)//2 + new_h, (size-new_w) //
            2:(size-new_w)//2 + new_w, :] = resized_image
     canvas = canvas.astype(np.uint8)
-
     bbox[:4] = bbox[:4] * scale
 
     # add padding h w
@@ -130,14 +133,10 @@ def batch_to_gpu(data):
 
 if __name__ == "__main__":
 
-    gen = Generator(is_train=True)
-
-    train_dataset = Generator(is_train=True)
+    # example usage:
+    train_dataset = MaskDataLoader(is_train=True)
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=16, shuffle=True,
-                                               num_workers=0, collate_fn=collate_fn)
-
-    flag = True
+                                               num_workers=0, collate_fn=torch.utils.data.dataloader.default_collate)
     for data in train_loader:
-        x, y = data
-        print(y)
+        print(data)
         break
