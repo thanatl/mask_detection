@@ -76,11 +76,11 @@ def create_data_file_1():
     train_unmask, test_unmask = _split_train_test(face_data_unmask)
 
     def _to_dict(data):
-        data = {d[0]: { 'x': int(d[1][1]),
+        data = {d[0]: {'0':{ 'x': int(d[1][1]),
                         'y': int(d[1][2]),
                         'w': int(d[1][3]),
                         'h': int(d[1][4]),
-                        'mask': int(d[2])}
+                        'mask': int(d[2])}}
                     for idx, d in enumerate(data) if d[1][0] == 1}
         return data
 
@@ -91,6 +91,10 @@ def create_data_file_1():
 
 
 def create_data_file_2():
+    '''
+    Parse data from https://www.kaggle.com/alexandralorenzo/maskdetection
+    This dataset consist of multiple object in single image
+    '''
 
     train_image_path =  os.path.join('data', 'yolo', 'images', 'train')
     train_label_path =  os.path.join('data', 'yolo', 'labels', 'train')
@@ -108,18 +112,18 @@ def create_data_file_2():
         ob_data = []
         for file in images_filepath: 
             with open(os.path.join(label_path,file[len(image_path)+1:-3]+'txt'), 'r') as f:
-                data = [float(coord) for coord in f.read().replace('\n','').split(' ')] + [file] # concat image filepath
+                data = [[ float(coord) for coord in line.replace('\n', '').split(' ')] for line in f.readlines()] + [file]
                 ob_data.append(data)
         
         return ob_data, imgs
 
     def _to_dict(data, imgs):
 
-        data = {d[5]: { 'x': int(d[1]*imgs[idx].shape[0]) - int(d[3]*imgs[idx].shape[0])//2,
-                        'y': int(d[2]*imgs[idx].shape[1]) - int(d[4]*imgs[idx].shape[1])//2,
-                        'w': int(d[3]*imgs[idx].shape[0]),
-                        'h': int(d[4]*imgs[idx].shape[1]),
-                        'mask': int(d[0])}
+        data = {d[-1]: {str(jdx):{ 'x': int(coord[1]*imgs[idx].shape[0]) - int(coord[3]*imgs[idx].shape[0])//2,
+                        'y': int(coord[2]*imgs[idx].shape[1]) - int(coord[4]*imgs[idx].shape[1])//2,
+                        'w': int(coord[3]*imgs[idx].shape[0]),
+                        'h': int(coord[4]*imgs[idx].shape[1]),
+                        'mask': 0 if int(coord[0])==1 else 1} for jdx, coord in enumerate(d[:-1])} # this dataset labelled 1 as no-mask
                     for idx, d in enumerate(data)}
         return data
     

@@ -35,7 +35,7 @@ class MaskDataLoader:
 
     @staticmethod
     def extract_coord_label(data):
-        return np.array([data['x'], data['y'], data['w'], data['h'], data['mask']]).astype('float32')
+        return np.array([[item['x'], item['y'], item['w'], item['h'], item['mask']] for item in data.values()]).astype('float32')
 
     def convert_coord(x, y, w, h, width=None, height=None):
         pass
@@ -43,8 +43,12 @@ class MaskDataLoader:
     def get_data(self, data_file):
         label = self.extract_coord_label(self.data[data_file])
         image = self.read_image(data_file)
+        if np.any(image == None):
+            print(data_file)
         image, label = resize_img_bbox_letterbox(image, label, self.resize)
         image = image_pytorch_format(image)
+        image = torch.from_numpy(image)
+        label = torch.from_numpy(label)
         return image, label
 
     def __getitem__(self, index):
@@ -53,6 +57,24 @@ class MaskDataLoader:
     def __len__(self):
         return len(self.image_file)
 
+def collate_fn(batch):
+    '''
+    Return image tensor, label tensor with padding bbox, number of max bbox in that image
+    '''
+    # Right zero-pad all one-hot text sequences to max input length
+    max_input_len = sorted([x[1].size(0) for x in batch], reverse=True)[0]
+    bbox_tensor = torch.LongTensor(len(batch), max_input_len, 5)
+    channel = batch[0][0].size(0)
+    size = batch[0][0].size(1)
+    image_tensor = torch.LongTensor(len(batch), channel, size, size)
+    bbox_tensor.zero_()
+    bbox_count_tensor = torch.LongTensor(len(batch), 1)
+    for idx, data in enumerate(batch):
+        bbox = data[1]
+        bbox_count_tensor[idx] = bbox.size(0)
+        bbox_tensor[idx, :bbox.size(0), :] = bbox
+        image_tensor[idx, :,:,:] = data[0]
+    return image_tensor, bbox_tensor, bbox_count_tensor
 
 def normalize_bbox(img, bbox):
     '''
@@ -66,10 +88,10 @@ def normalize_bbox(img, bbox):
     '''
     w, h = img.shape[1], img.shape[0]
 
-    bbox[0] = bbox[0]/w
-    bbox[2] = bbox[2]/w
-    bbox[1] = bbox[1]/h
-    bbox[3] = bbox[3]/h
+    bbox[:,0] = bbox[:,0]/w
+    bbox[:,2] = bbox[:,2]/w
+    bbox[:,1] = bbox[:,1]/h
+    bbox[:,3] = bbox[:,3]/h
 
     return bbox
 
@@ -93,15 +115,14 @@ def resize_img_bbox_letterbox(img, bbox, size):
     new_h = int(h * scale)
 
     resized_image = cv2.resize(img, (new_w, new_h))
-    print(resized_image.shape)
     canvas = np.full((size, size, 3), 0)
     canvas[(size-new_h)//2:(size-new_h)//2 + new_h, (size-new_w) //
            2:(size-new_w)//2 + new_w, :] = resized_image
     canvas = canvas.astype(np.uint8)
-    bbox[:4] = bbox[:4] * scale
+    bbox[:,:4] = bbox[:,:4] * scale
 
     # add padding h w
-    bbox[:4] += np.array([(size - new_w)/2,
+    bbox[:,:4] += np.array([(size - new_w)/2,
                           (size - new_h)/2, 0, 0]).astype(int)
 
     return canvas, bbox
@@ -120,23 +141,20 @@ def to_gpu(x):
 
 
 def batch_to_gpu(data):
-    img, target = data
-    x,y,w,h,mask = target
+    img, target, count = data
     img = to_gpu(img).float()
-    x = to_gpu(x).float()
-    y = to_gpu(y).float()
-    w = to_gpu(w).float()
-    h = to_gpu(h).float()
-    mask = to_gpu(mask).float()
-    return img, (x, y, w, h, mask)
+    target = to_gpu(target).float()
+    count = to_gpu(count).float()
+    return img, target
 
 
 if __name__ == "__main__":
 
     # example usage:
+    # note: torch.utils.data.dataloader.default_collate doenst work
     train_dataset = MaskDataLoader(is_train=True)
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=16, shuffle=True,
-                                               num_workers=0, collate_fn=torch.utils.data.dataloader.default_collate)
+                                               num_workers=0, collate_fn=collate_fn)
     for data in train_loader:
-        print(data)
+        img, target = batch_to_gpu(data)
         break
