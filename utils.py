@@ -206,8 +206,8 @@ def cxcy_to_gcxgcy(cxcy, priors_cxcy):
     # The 10 and 5 below are referred to as 'variances' in the original Caffe repo, completely empirical
     # They are for some sort of numerical conditioning, for 'scaling the localization gradient'
     # See https://github.com/weiliu89/caffe/issues/155
-    return torch.cat([(cxcy[:, :2] - priors_cxcy[:, :2]) / (priors_cxcy[:, 2:] / 10),  # g_c_x, g_c_y
-                      torch.log(cxcy[:, 2:] / priors_cxcy[:, 2:]) * 5], 1)  # g_w, g_h
+    return torch.cat([(cxcy[:, :2] - priors_cxcy[:, :2]) / (priors_cxcy[:, 2:]),  # g_c_x, g_c_y
+                      torch.log(cxcy[:, 2:] / priors_cxcy[:, 2:])], 1)  # g_w, g_h
 
 
 def gcxgcy_to_cxcy(gcxgcy, priors_cxcy):
@@ -259,9 +259,6 @@ def find_jaccard_overlap(set_1, set_2):
     union = areas_set_1.unsqueeze(1) + areas_set_2.unsqueeze(0) - intersection  # (n1, n2)
 
     return intersection / union  # (n1, n2)
-
-
-
 
 
 def adjust_learning_rate(optimizer, scale):

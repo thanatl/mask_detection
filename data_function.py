@@ -15,7 +15,7 @@ from transforms import transform, image_pytorch_format
 
 class MaskDataLoader:
 
-    def __init__(self, is_train, resize=416):
+    def __init__(self, is_train, resize=300):
 
         self.resize = resize
         self.json_file = os.path.join(
@@ -43,7 +43,8 @@ class MaskDataLoader:
     @staticmethod
     def extract_coord_label(data):
         data = np.array([[item['x'], item['y'], item['w'], item['h'], item['mask']] for item in data.values()]).astype('float32')
-        return data[:,:4], data[:,4].reshape((-1,1))
+        # return data[:,:4], data[:,4].reshape((-1,1))
+        return data[:,:4], data[:,4] + 1
 
     @staticmethod
     def convert_coord_center_xy_wh(coord):
@@ -55,7 +56,7 @@ class MaskDataLoader:
 
     def get_data(self, data_file):
         coord, label = self.extract_coord_label(self.data[data_file])
-        coord = self.convert_coord_center_xy_wh(coord)
+        coord = self.convert_coord_min_max_xy(coord)
         image = self.read_image(data_file)
         image = self.convert_to_PIL(image)
         coord = torch.FloatTensor(coord)  # (n_objects, 4)
@@ -91,6 +92,23 @@ def collate_fn(batch):
         target_tensor[idx, :label.size(0), :] = label
         image_tensor[idx, :,:,:] = data[0]
     return image_tensor, bbox_tensor, target_tensor, bbox_count_tensor
+
+def collate_fn_list(batch):
+    '''
+    Return tensor of image and list of target and bbox
+    '''
+    images = list()
+    boxes = list()
+    labels = list()
+
+    for b in batch:
+        images.append(b[0])
+        boxes.append(b[1])
+        labels.append(b[2])
+
+    images = torch.stack(images, dim=0)
+
+    return images, boxes, labels
 
 
 def to_gpu(x):
