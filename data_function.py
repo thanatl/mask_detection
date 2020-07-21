@@ -3,9 +3,11 @@ import torch
 import numpy as np
 import dlib
 import cv2
+from PIL import Image
 import os
 import json
 from glob import glob
+from transforms import transform, image_pytorch_format
 
 # In coco format, bbox = [xmin, ymin, width, height]
 # In pytorch, the input should be [xmin, ymin, xmax, ymax]
@@ -30,26 +32,36 @@ class MaskDataLoader:
     @staticmethod
     def read_image(file):
         image = cv2.imread(file)  # (height, width, channel)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         # image = image.reshape((image.shape[2], image.shape[0], image.shape[1])) #(channel, height, width)
         return image
 
     @staticmethod
-    def extract_coord_label(data):
-        return np.array([[item['x'], item['y'], item['w'], item['h'], item['mask']] for item in data.values()]).astype('float32')
+    def convert_to_PIL(img):
+        return Image.fromarray(img)
 
-    def convert_coord(x, y, w, h, width=None, height=None):
-        pass
+    @staticmethod
+    def extract_coord_label(data):
+        data = np.array([[item['x'], item['y'], item['w'], item['h'], item['mask']] for item in data.values()]).astype('float32')
+        return data[:,:4], data[:,4].reshape((-1,1))
+
+    @staticmethod
+    def convert_coord_center_xy_wh(coord):
+        return np.array([[c[0]-c[2]//2, c[1]-c[3]//2, c[2], c[3]] for c in coord]).astype('float32')
+
+    @staticmethod
+    def convert_coord_min_max_xy(coord):
+        return np.array([[c[0], c[1], c[0] + c[2] , c[1] + c[3]] for c in coord]).astype('float32')
 
     def get_data(self, data_file):
-        label = self.extract_coord_label(self.data[data_file])
+        coord, label = self.extract_coord_label(self.data[data_file])
+        coord = self.convert_coord_center_xy_wh(coord)
         image = self.read_image(data_file)
-        if np.any(image == None):
-            print(data_file)
-        image, label = resize_img_bbox_letterbox(image, label, self.resize)
-        image = image_pytorch_format(image)
-        image = torch.from_numpy(image)
-        label = torch.from_numpy(label)
-        return image, label
+        image = self.convert_to_PIL(image)
+        coord = torch.FloatTensor(coord)  # (n_objects, 4)
+        label = torch.LongTensor(label)
+        image, coord, label = transform(image, coord, label, self.resize, is_train=True)
+        return image, coord, label
 
     def __getitem__(self, index):
         return self.get_data(self.image_file[index])
@@ -63,73 +75,22 @@ def collate_fn(batch):
     '''
     # Right zero-pad all one-hot text sequences to max input length
     max_input_len = sorted([x[1].size(0) for x in batch], reverse=True)[0]
-    bbox_tensor = torch.LongTensor(len(batch), max_input_len, 5)
+    bbox_tensor = torch.FloatTensor(len(batch), max_input_len, 4)
     channel = batch[0][0].size(0)
     size = batch[0][0].size(1)
-    image_tensor = torch.LongTensor(len(batch), channel, size, size)
+    image_tensor = torch.FloatTensor(len(batch), channel, size, size)
     bbox_tensor.zero_()
     bbox_count_tensor = torch.LongTensor(len(batch), 1)
+    target_tensor = torch.LongTensor(len(batch), max_input_len, 1)
+    target_tensor.zero_()
     for idx, data in enumerate(batch):
         bbox = data[1]
+        label = data[2]
         bbox_count_tensor[idx] = bbox.size(0)
         bbox_tensor[idx, :bbox.size(0), :] = bbox
+        target_tensor[idx, :label.size(0), :] = label
         image_tensor[idx, :,:,:] = data[0]
-    return image_tensor, bbox_tensor, bbox_count_tensor
-
-def normalize_bbox(img, bbox):
-    '''
-    Arugments:
-    img - image array (channel, height, width)
-    bbox - bounding box (center x, center y, width, height, mask_label)
-    size - the resize image
-
-    Return:
-    bbox - normalize bounding box according to image size
-    '''
-    w, h = img.shape[1], img.shape[0]
-
-    bbox[:,0] = bbox[:,0]/w
-    bbox[:,2] = bbox[:,2]/w
-    bbox[:,1] = bbox[:,1]/h
-    bbox[:,3] = bbox[:,3]/h
-
-    return bbox
-
-
-def resize_img_bbox_letterbox(img, bbox, size):
-    '''
-    Arugments:
-    img - image array (channel, height, width)
-    bbox - bounding box (center x, center y, width, height, mask_label)
-    size - the resize image
-
-    Return:
-    img - resize image as a letter box padding, keep the original aspect ratio of the image and padding the smaller aspect of the image
-    bbox - resize bounding box according to the image 
-
-    '''
-
-    w, h = img.shape[1], img.shape[0]
-    scale = min(size/w, size/h)
-    new_w = int(w * scale)
-    new_h = int(h * scale)
-
-    resized_image = cv2.resize(img, (new_w, new_h))
-    canvas = np.full((size, size, 3), 0)
-    canvas[(size-new_h)//2:(size-new_h)//2 + new_h, (size-new_w) //
-           2:(size-new_w)//2 + new_w, :] = resized_image
-    canvas = canvas.astype(np.uint8)
-    bbox[:,:4] = bbox[:,:4] * scale
-
-    # add padding h w
-    bbox[:,:4] += np.array([(size - new_w)/2,
-                          (size - new_h)/2, 0, 0]).astype(int)
-
-    return canvas, bbox
-
-
-def image_pytorch_format(img):
-    return img.reshape((img.shape[2], img.shape[0], img.shape[1]))
+    return image_tensor, bbox_tensor, target_tensor, bbox_count_tensor
 
 
 def to_gpu(x):
@@ -141,11 +102,12 @@ def to_gpu(x):
 
 
 def batch_to_gpu(data):
-    img, target, count = data
+    img, coord, target, count = data
     img = to_gpu(img).float()
-    target = to_gpu(target).float()
+    target = to_gpu(target).long()
+    coord = to_gpu(coord).float()
     count = to_gpu(count).float()
-    return img, target
+    return img, (coord, target, count)
 
 
 if __name__ == "__main__":
@@ -157,4 +119,5 @@ if __name__ == "__main__":
                                                num_workers=0, collate_fn=collate_fn)
     for data in train_loader:
         img, target = batch_to_gpu(data)
+        print(target)
         break
