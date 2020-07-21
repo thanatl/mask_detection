@@ -249,7 +249,7 @@ def normalize_bbox(img, bbox):
     return bbox
 
 
-def resize_img_bbox_letterbox(img, bbox, size):
+def resize_img_bbox_letterbox(img, bbox, size, return_coords=True):
     '''
     Arugments:
     img - image PIL (height, width, channel)
@@ -272,13 +272,17 @@ def resize_img_bbox_letterbox(img, bbox, size):
     canvas[(size-new_h)//2:(size-new_h)//2 + new_h, (size-new_w) //
            2:(size-new_w)//2 + new_w, :] = resized_image
     canvas = canvas.astype(np.uint8)
-    bbox[:,:4] = bbox[:,:4] * scale
 
-    # add padding h w
-    bbox[:,:4] += torch.FloatTensor([(size - new_w)/2,
-                          (size - new_h)/2, (size - new_w)/2, (size - new_h)/2])
+    if return_coords:
+        bbox[:,:4] = bbox[:,:4] * scale
 
-    return canvas, bbox
+        # add padding h w
+        bbox[:,:4] += torch.FloatTensor([(size - new_w)/2,
+                            (size - new_h)/2, (size - new_w)/2, (size - new_h)/2])
+
+        return canvas, bbox
+    else:
+        return canvas
 
 
 def image_pytorch_format(img):
